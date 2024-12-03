@@ -48,6 +48,8 @@ function normalizeInfectionName(infectionName) {
     return infectionMapping[infectionName] || infectionName;
 }
 
+// Declare `states` globally
+let states;
 
 // Load the GeoJSON data and infection data
 Promise.all([
@@ -55,14 +57,82 @@ Promise.all([
     d3.json("GZ2.geojson"), 
     d3.csv("healthcare_data.csv")  
 ]).then(([geoData, infectionData]) => {
-    // Process infection data by state
-    const infectionByState = {};
-    infectionData.forEach(d => {
-        const state = d.state;
-        const score = +d.score;
-        infectionByState[state] = (infectionByState[state] || 0) + score;
+    console.log("Sample infection data:", infectionData[0]); // Debugging
+
+    // Utility function to calculate infections by year
+    function calculateInfectionsByYear(infectionData, selectedYear) {
+        const filteredData = selectedYear === "all" 
+            ? infectionData 
+            : infectionData.filter(d => d.start_date.split('/')[2] === selectedYear);
+
+        const infectionByState = {};
+        filteredData.forEach(d => {
+            const state = d.state;
+            const score = +d.score || 0;
+            infectionByState[state] = (infectionByState[state] || 0) + score;
+        });
+
+        return infectionByState;
+    }
+
+    // Populate year dropdown
+    const years = Array.from(new Set(infectionData.map(d => d.start_date.split('/')[2])));
+    const yearDropdown = d3.select('#year-filter');
+    yearDropdown.append("option").attr("value", "all").text("All Years");
+    years.sort().forEach(year => {
+        yearDropdown.append("option").attr("value", year).text(year);
     });
 
+    const yearFilter = d3.select("#year-filter");
+    if (yearFilter.empty()) {
+        console.error("Year filter dropdown not found in the DOM!");
+    } else {
+        console.log("Year filter dropdown successfully found.");
+}
+
+    // Initial infection data for all years
+    let infectionByState = calculateInfectionsByYear(infectionData, "all");
+    
+    // Set up color scale
+    const maxInfections = d3.max(Object.values(infectionByState)) || 1;
+    const colorScale = d3.scaleSequential(d3.interpolateBlues).domain([0, maxInfections]);
+
+    /// Year filter event listener
+    d3.select("#year-filter").on("change", () => {
+        console.log("Year filter change event triggered");
+        
+        // Get selected year
+        const selectedYear = d3.select("#year-filter").node().value;
+        console.log("Selected Year:", selectedYear);
+
+        // Recalculate infection data
+        infectionByState = calculateInfectionsByYear(infectionData, selectedYear);
+        console.log("Updated infectionByState:", infectionByState)
+
+        // Update color scale domain
+        const maxInfections = d3.max(Object.values(infectionByState)) || 1;
+        colorScale.domain([0, maxInfections]);
+        
+        console.log("Updated infectionByState:", infectionByState);
+        console.log("Updated colorScale domain:", colorScale.domain());
+
+        // Update map colors
+        states.transition()
+        .duration(750)
+        .attr("fill", d => {
+            const state = d.properties.NAME;
+            const infectionCount = infectionByState[state];
+            return infectionCount ? colorScale(infectionCount) : "#eee";           
+            });
+
+        // If a state is selected, update hospital markers
+        if (currentSelectedState) {
+            showHospitals(currentSelectedState);
+    }
+    });
+
+
+    console.log("Extracted years:", years); // Debugging
     // Populate filter dropdown with unique infection types
     const infectionTypes = Array.from(new Set(infectionData.map(d => normalizeInfectionName(d.measure_name))));
     const filterDropdown = d3.select('#filter');
@@ -79,7 +149,7 @@ Promise.all([
 
     // Using help from: https://observablehq.com/@d3/us-state-choropleth/2
     // Bind data and create one path per GeoJSON feature
-    const states = mapGroup.selectAll("path")
+    states = mapGroup.selectAll("path")
         .data(geoData.features)
         .enter()
         .append("path")
@@ -156,13 +226,17 @@ Promise.all([
         showHospitals(stateName);
     }
     
-        
-
+    
     function showHospitals(stateName) {
         const selectedType = d3.select("#filter").node().value;
+        const selectedYear = d3.select("#year-filter").node().value;
     
-        // Filter data for the selected state
-        const stateData = infectionData.filter(d => d.state === stateName);
+        // Filter data for the selected state and year
+        let stateData = infectionData.filter(d => d.state === stateName);
+    
+        if (selectedYear !== "all") {
+            stateData = stateData.filter(d => d.start_date.split('/')[2] === selectedYear);
+        }
     
         // Aggregate infection data by hospital
         const aggregatedData = aggregateInfectionData(stateData, selectedType);
@@ -198,9 +272,13 @@ Promise.all([
             })
             .on("mouseout", () => {
                 tooltip.style("display", "none");
+            })
+            .on("click", (event, d) => {
+                // Navigate to multi-series_linegraph.html with hospital ID as query parameter
+                const hospitalName = encodeURIComponent(d.hospital_id);
+                window.location.href = `multi-series_linegraph.html?hospital=${hospitalName}`;
             });
     }
-    
     
     // Aggregation logic for infection counts by hospital and infection type
         function aggregateInfectionData(infectionData, selectedType) {
@@ -299,7 +377,31 @@ Promise.all([
             hospitalGroup.selectAll("circle").remove();
         });
         
-
+        d3.select("#year-filter").on("change", () => {
+            if (currentSelectedState) {
+                // Update the hospital pins for the currently selected state
+                showHospitals(currentSelectedState);
+        
+                // Reapply the zoom and fill logic for the selected state
+                const selectedState = geoData.features.find(
+                    d => d.properties.NAME === currentSelectedState
+                );
+                if (selectedState) {
+                    const [[x0, y0], [x1, y1]] = path.bounds(selectedState);
+                    const dx = x1 - x0;
+                    const dy = y1 - y0;
+                    const x = (x0 + x1) / 2;
+                    const y = (y0 + y1) / 2;
+                    const scale = Math.max(1, Math.min(8, 0.9 / Math.max(dx / width, dy / height)));
+                    const translate = [width / 2 - scale * x, height / 2 - scale * y];
+        
+                    svg.transition()
+                        .duration(750)
+                        .call(zoom.transform, d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale));
+                }
+            }
+        });
+        
     
     // Add a legend for the color scale
     const legendWidth = 300;
