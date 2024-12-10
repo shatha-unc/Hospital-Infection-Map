@@ -37,6 +37,31 @@
             background-color: #e9ecef;
             cursor: pointer;
         }
+
+        .dropdown-container {
+    position: relative;
+    margin-bottom: 10px;
+}
+
+.dropdown-input {
+    width: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    margin-bottom: 5px;
+}
+
+.dropdown-select {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 5px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
     
         #map {
         width: 80%;
@@ -48,6 +73,16 @@
         background-color: #ffffff;
         display: block; /* Ensures the map is treated as a block element */
         }
+
+        #yearSelect {
+    display: block; /* Ensures the dropdown is visible */
+    width: 10%;    /* Adjust width to match the container */
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    margin-top: 10px;
+}
+
     
         .tooltip {
             position: absolute;
@@ -68,20 +103,180 @@
         #tooltip {
             font-family: Arial, sans-serif;
         }
+
+        #exportModal select {
+    display: block; /* Ensure dropdowns are not hidden */
+    width: 100%;    /* Make them responsive */
+}
+
+.chart {
+            font-family: sans-serif;
+            margin-top: 20px;
+            width: 100%;
+            height: 800px;
+        }
+
+        .axis-label {
+            font-size: 12px;
+        }
+
+        .legend {
+            font-size: 12px;
+        }
+
+        #chart-container {
+            display: flex;
+        }
+
+        #legend-container {
+            width: 100px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Add spacing and alignment for the dropdowns */
+        .flex-container {
+    display: flex; /* Use flexbox for horizontal layout */
+    justify-content: flex-end; /* Align all elements to the right */
+    align-items: center; /* Align items vertically in the center */
+    gap: 10px; /* Add space between the dropdowns and buttons */
+    margin: 20px; /* Add some margin */
+    margin-bottom: 40px;
+    margin-top: 40px;
+}
+
+
+/* Ensure dropdowns have consistent size */
+.flex-container select {
+    min-width: 200px; /* Adjust width as needed */
+    padding: 8px; /* Add padding for consistent appearance */
+}
+
+
+
+
+        .modal {
+       display: none;
+       position: fixed;
+       z-index: 1000;
+       left: 0;
+       top: 0;
+       width: 100%;
+       height: 100%;
+       overflow: auto;
+       background-color: rgba(0,0,0,0.8);
+       border-radius: 10px;
+   }
+
+   .modal-content {
+       background-color: #fefefe;
+       margin: 5% auto;
+       padding: 20px;
+       border: 1px solid #888;
+       width: 90%;
+       height: 80vh;
+       box-sizing: border-box;
+       border-radius: 10px;
+       overflow: hidden;
+   }
+
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+}
+
+.close:hover,
+.close:focus {
+    color: black;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+#lineGraphFrame {
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+#county-stats {
+    width: 200px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
     </style>
     
 </head>
 <body>
-    <h1>Hospital-Acquired Infection Rates</h1>
-    <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin: 20px 0;">
+    <h1>Hospital-Acquired Infection Rates by State</h1>
+    <div class="flex-container">
         <select id="filter">
             <option value="all">All Infection Types</option>
         </select>
+    
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span id="yearLabel">All Years</span>
+            <input id="yearSlider" type="range" min="0" step="1" />
+        </div>
+    
+        <button id="exportButton">Export Data</button>
         <button id="resetButton">Reset View</button>
     </div>
     
+        
+
+        
+
+<!-- Modal for export filters -->
+<div id="exportModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 300px; background: white; border: 1px solid #ccc; border-radius: 10px; padding: 20px; box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);">
+    <h3 style="text-align: center;">Export Filters</h3>
+
+<!-- State Dropdown -->
+<label for="stateSelect">State:</label>
+<div class="dropdown-container">
+    <input type="text" id="stateInput" placeholder="Type to search..." class="dropdown-input" />
+    <select id="stateSelect" size="5" class="dropdown-select"></select>
+</div>
+
+<!-- Hospital Dropdown -->
+<label for="hospitalSelect">Hospital:</label>
+<div class="dropdown-container">
+    <input type="text" id="hospitalInput" placeholder="Type to search..." class="dropdown-input" />
+    <select id="hospitalSelect" size="5" class="dropdown-select"></select>
+</div>
+
+<!-- Infection Dropdown -->
+<label for="infectionSelect">Infection Type:</label>
+<div class="dropdown-container">
+    <input type="text" id="infectionInput" placeholder="Type to search..." class="dropdown-input" />
+    <select id="infectionSelect" size="5" class="dropdown-select"></select>
+</div>
+
+
+    <div style="text-align: center;">
+        <button id="exportCsvButton" style="margin-right: 10px;">Export</button>
+        <button id="closeModalButton">Cancel</button>
+    </div>
+</div>
+
+
+    
     <div id="map" ></div>
     <div class="tooltip" id="tooltip"></div>
-    <script src="choroplethmap.js"></script>  
+    <!-- Modal for Line Graph -->
+    <div id="lineGraphModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <iframe id="lineGraphFrame" src="" style="width: 100%; height: 80vh; border: none;"></iframe>
+        </div>
+    </div>
+    <div id="county-stats" style="position: absolute; top: 10px; right: 10px; background: white; padding: 10px; border: 1px solid #ccc; display: none;">
+        <h4>County Statistics</h4>
+        <p id="county-name"></p>
+        <p id="total-infections"></p>
+        <!-- Add more stats as needed -->
+    </div>
+    <script src="new.js"></script>  
 </body>
 </html>

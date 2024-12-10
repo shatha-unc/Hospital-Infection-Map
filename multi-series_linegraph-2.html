@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Multi-series Line Chart</title>
+
+    <!-- Import D3.js library for data visualization -->
+    <script src="https://d3js.org/d3.v7.min.js" charset="utf-8"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-statistics/7.7.0/simple-statistics.min.js"></script>
+
+    <!-- CSS for axis labels, lines, and ticks -->
+    <style>
+        .chart {
+            font-family: sans-serif;
+            margin-top: 20px;
+            width: 100%;
+            height: 800px;
+            overflow: hidden;
+        }
+
+        .axis-label {
+            font-size: 12px;
+        }
+
+        .legend {
+            font-size: 12px;
+        }
+
+        #chart-container {
+            display: flex;
+            overflow: hidden;
+        }
+
+        #legend-container {
+            width: 100px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+    </style>
+
+</head>
+
+<body>
+    <label for="hospital-select">Select a Hospital:</label>
+    <select id="hospital-select"></select>
+    <button class="reset-button">Reset</button>
+    <button id="return-to-map" style="margin-bottom: 20px;">Return to Choropleth Map</button>
+
+    <div id="chart-container">
+        <div>
+            <h1>Hospital</h1>
+            <div id="chart-hospital" class="chart"></div>
+        </div>
+        <div>
+            <h1>National</h1>
+            <div id="chart-national" class="chart"></div>
+        </div>
+        <div id="legend-container">
+            <label for="measure-select"></label>
+            <select id="measure-select"></select>
+            <div class="legend"></div>
+        </div>
+    </div>
+
+    <script>
+        const file = "healthcare_data.csv";
+
+        // Header standardization map
+        const headerMap = {
+            "facility_id": "Provider ID",
+            "hospital_id": "Hospital Name",
+            "address": "Address",
+            "city": "City",
+            "state": "State",
+            "zip_code": "ZIP Code",
+            "county_name": "County Name",
+            "measure_name": "Measure Name",
+            "compared_to_national": "Compared to National",
+            "score": "Score",
+            "start_date": "Measure Start Date",
+            "end_date": "Measure End Date",
+            "original_Address": "Compiled Address"
+        };
+
+        // Master headers for alignment
+        const masterHeaders = ["Provider ID", "Hospital Name", "Address", "City", "State", "ZIP Code", "County Name", "Measure Name", "Compared to National", "Score", "Measure Start Date", "Measure End Date"];
+
+        // Required columns
+        const requiredColumns = ["Hospital Name", "Address", "City", "State", "ZIP Code", "County Name", "Measure Name", "Score", "Measure Start Date"];
+
+        // Measure mapping object
+        const measureNameMapping = {
+            "Central Line Associated Bloodstream Infection (ICU + select Wards): Observed Cases": "CLABSI: Observed Cases",
+            "Catheter Associated Urinary Tract Infections (ICU + select Wards): Observed Cases": "CAUTI: Observed Cases",
+            "SSI: Colon Observed Cases": "SSI - Colon Surgery: Observed Cases",
+            "SSI: Abdominal Observed Cases": "SSI - Abdominal Hysterectomy: Observed Cases",
+            "MRSA Observed Cases": "MRSA Bacteremia: Observed Cases",
+            "C.diff Observed Cases": "Clostridium Difficile (C.Diff): Observed Cases"
+        };
+
+        // Groups for filtering in dropdown
+        const measureGroups = {
+            "Central Line Associated Bloodstream Infection (CLABSI)": "CLABSI: Observed Cases",
+            "Catheter Associated Urinary Tract Infections (CAUTI)": "CAUTI: Observed Cases",
+            "Surgical Site Infection from Colon Surgery (SSI: Colon)": "SSI - Colon Surgery: Observed Cases",
+            "Surgical Site Infection from Abdominal Hysterectomy (SSI: Hysterectomy)": "SSI - Abdominal Hysterectomy: Observed Cases",
+            "Methicillin-resistant Staphylococcus Aureus (MRSA)": "MRSA Bacteremia: Observed Cases",
+            "Clostridium Difficile (C.Diff.) ": "Clostridium Difficile (C.Diff): Observed Cases"
+        };
+
+        // Global variables for caching
+        let filteredData = [];
+        let hospitals = [];
+        let globalDateExtent;
+        let colorScale;
+        let clickedLine = null;
+
+        // Load and process data
+        d3.csv(file).then(data => {
+            // Standardize headers
+            data = data.map(row => {
+                const standardizedRow = {};
+                for (const key in row) {
+                    const standardizedKey = headerMap[key.trim()] || key.trim();
+                    standardizedRow[standardizedKey] = row[key];
+                }
+                return standardizedRow;
+            });
+
+            // Align columns
+            data = data.map(row => {
+                const alignedRow = {};
+                masterHeaders.forEach(header => {
+                    alignedRow[header] = row[header] || null;
+                });
+                return alignedRow;
+            });
+
+            // Filter rows with valid scores
+            const parseDate = d3.timeParse("%m/%d/%Y");
+            filteredData = data.filter(d => d.Score !== null && !isNaN(d.Score)).map(d => {
+                d["Measure Start Date"] = parseDate(d["Measure Start Date"]);
+                d["Score"] = +d["Score"];
+                // Standardize measure names
+                if (measureNameMapping[d["Measure Name"]]) {
+                    d["Measure Name"] = measureNameMapping[d["Measure Name"]];
+                }
+                return d;
+            });
+
+            // Extract unique hospitals
+            hospitals = Array.from(new Set(filteredData.map(d => d["Hospital Name"])));
+
+            // Precompute global date extent
+            globalDateExtent = d3.extent(filteredData, d => d["Measure Start Date"]);
+
+            // Define a large color palette
+            const colorPalette = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22",
+                "#17becf","#9edae5","#f7b6d2","#c5b0d5","#c49c94","#e7ba52","#9c9ede","#8c6d31","#beaed4","#fdbe6c",
+                "#7f6a93","#8c564b","#c7c7c7","#e377c2","#f7b6d2","#d62728","#edc947","#6baed6","#63707d","#ff5b5b",
+                "#9ac7ed","#90d4d2","#ffb533","#ff6f61","#ff57a6","#6b8e23"];
+
+            // Initialize color scale domain with all possible measure names
+            const allMeasures = Array.from(new Set(filteredData.map(d => d["Measure Name"])));
+            colorScale = d3.scaleOrdinal()
+                .domain(allMeasures)
+                .range(colorPalette);
+
+            // Populate the hospital dropdown
+            const hospitalSelect = d3.select("#hospital-select");
+            hospitalSelect.selectAll("option")
+                .data(hospitals)
+                .enter()
+                .append("option")
+                .text(d => d)
+                .attr("value", d => d);
+
+            // Automatically select and display the first hospital's data
+            const defaultHospital = hospitals[0];
+            hospitalSelect.property("value", defaultHospital);
+            displayMeasures(defaultHospital);
+
+            let lastClickedHospital = defaultHospital;
+
+            // Event listener for dropdown change
+            hospitalSelect.on("change", function () {
+                const selectedHospital = this.value;
+                displayMeasures(selectedHospital);
+                lastClickedHospital = selectedHospital;
+            });
+
+            // Reset button functionality
+            d3.select(".reset-button").on("click", () => {
+                displayMeasures(lastClickedHospital);
+                hospitalSelect.property("value", lastClickedHospital);
+            });
+
+            // Handle query parameter for hospital
+            const params = new URLSearchParams(window.location.search);
+            const hospitalName = params.get('hospital');
+            if (hospitalName) {
+                hospitalSelect.property("value", decodeURIComponent(hospitalName));
+                hospitalSelect.dispatch("change");
+            }
+        }).catch(error => {
+            console.error("Error processing file:", error);
+        });
+
+        function displayMeasures(hospitalName) {
+            // Clear previous charts
+            const hospitalChartId = "#chart-hospital";
+            const nationalChartId = "#chart-national";
+            d3.select(hospitalChartId).html("");
+            d3.select(nationalChartId).html("");
+
+            const width = 500;
+            const height = 500;
+            const margin = { top: 20, right: 0, bottom: 40, left: 95 };
+
+            const svgHospital = d3.select(hospitalChartId).append("svg")
+                .attr("width", width)
+                .attr("height", height);
+
+            const svgNational = d3.select(nationalChartId).append("svg")
+                .attr("width", width)
+                .attr("height", height);
+
+            // Filter data for the selected hospital
+            const hospitalData = filteredData.filter(d => d["Hospital Name"] === hospitalName);
+
+            // Group hospital data by measure
+            const hospitalMeasures = d3.group(hospitalData, d => d["Measure Name"]);
+
+            // Compute national measures by summing over all hospitals by date and measure
+            const nationalMeasures = d3.rollup(
+                filteredData,
+                v => d3.sum(v, d => d["Score"]),
+                d => d["Measure Name"],
+                d => d["Measure Start Date"]
+            );
+
+            // Define scales
+            const x = d3.scaleTime()
+                .domain(globalDateExtent)
+                .range([margin.left, width - margin.right]);
+
+            const maxHospitalScore = d3.max(Array.from(hospitalMeasures.values()).flat(), d => d.Score) || 0;
+            const yHospital = d3.scaleLinear()
+                .domain([0, maxHospitalScore])
+                .nice()
+                .range([height - margin.bottom, margin.top]);
+
+            const maxNationalScore = d3.max(Array.from(nationalMeasures.values()).flatMap(m => Array.from(m.values()))) || 0;
+            const yNational = d3.scaleLinear()
+                .domain([0, maxNationalScore])
+                .nice()
+                .range([height - margin.bottom, margin.top]);
+
+            // Add axes
+            svgHospital.append("g")
+                .attr("transform", `translate(0, ${height - margin.bottom})`)
+                .call(d3.axisBottom(x).tickFormat(d3.timeFormat("%b %Y")));
+
+            svgHospital.append("g")
+                .attr("transform", `translate(${margin.left}, 0)`)
+                .call(d3.axisLeft(yHospital));
+
+            svgNational.append("g")
+                .attr("transform", `translate(0, ${height - margin.bottom})`)
+                .call(d3.axisBottom(x).tickFormat(d3.timeFormat("%b %Y")));
+
+            svgNational.append("g")
+                .attr("transform", `translate(${margin.left}, 0)`)
+                .call(d3.axisLeft(yNational));
+
+            // Axis labels
+            svgHospital.append("text")
+                .attr("x", width / 2)
+                .attr("y", height - 5)
+                .attr("text-anchor", "middle")
+                .text("Date");
+
+            svgHospital.append("text")
+                .attr("x", -height / 2)
+                .attr("y", 35)
+                .attr("text-anchor", "middle")
+                .attr("transform", "rotate(-90)")
+                .text("Score");
+
+            svgNational.append("text")
+                .attr("x", width / 2)
+                .attr("y", height - 5)
+                .attr("text-anchor", "middle")
+                .text("Date");
+
+            svgNational.append("text")
+                .attr("x", -height / 2)
+                .attr("y", 15)
+                .attr("text-anchor", "middle")
+                .attr("transform", "rotate(-90)")
+                .text("Score");
+
+            // Highlight and click functions
+            function highlightLine(_, measureName, highlight) {
+                if (highlight) {
+                    d3.selectAll(`#chart-hospital path[data-measure="${measureName}"], #chart-national path[data-measure="${measureName}"]`)
+                        .attr("stroke-width", 4)
+                        .attr("opacity", 1);
+
+                    d3.selectAll(`.legend-item[data-measure="${measureName}"]`)
+                        .style("background-color", "#b3b3b37d");
+
+                    d3.selectAll("#chart-hospital path.line, #chart-national path.line")
+                        .filter(function () { return d3.select(this).attr("data-measure") !== measureName; })
+                        .attr("opacity", 0.3)
+                        .attr("stroke-width", 1.5);
+                } else {
+                    if (clickedLine) {
+                        d3.selectAll(`#chart-hospital path[data-measure="${clickedLine}"], #chart-national path[data-measure="${clickedLine}"]`)
+                            .attr("stroke-width", 4)
+                            .attr("opacity", 1);
+
+                        d3.selectAll(`.legend-item[data-measure="${clickedLine}"]`)
+                            .style("background-color", "#b3b3b37d");
+
+                        d3.selectAll("#chart-hospital path.line, #chart-national path.line")
+                            .filter(function () { return d3.select(this).attr("data-measure") !== clickedLine; })
+                            .attr("opacity", 0.3)
+                            .attr("stroke-width", 1.5);
+                    } else {
+                        d3.selectAll("#chart-hospital path.line, #chart-national path.line")
+                            .attr("stroke-width", 1.5)
+                            .attr("opacity", 1);
+                    }
+                }
+            }
+
+            function toggleClickedLine(_, measureName) {
+                d3.selectAll(".legend-item").style("background-color", "transparent");
+                if (clickedLine === measureName) {
+                    clickedLine = null;
+                    d3.selectAll(`#chart-hospital path[data-measure="${measureName}"], #chart-national path[data-measure="${measureName}"]`)
+                        .attr("stroke-width", 1.5)
+                        .attr("opacity", 1);
+                    d3.selectAll("#chart-hospital path.line, #chart-national path.line")
+                        .attr("opacity", 1)
+                        .attr("stroke-width", 1.5);
+                } else {
+                    if (clickedLine) {
+                        d3.selectAll(`#chart-hospital path[data-measure="${clickedLine}"], #chart-national path[data-measure="${clickedLine}"]`)
+                            .attr("stroke-width", 1.5)
+                            .attr("opacity", 0.3);
+                        d3.selectAll(`.legend-item[data-measure="${clickedLine}"]`)
+                            .style("background-color", "transparent");
+                    }
+                    clickedLine = measureName;
+                    d3.selectAll(`#chart-hospital path[data-measure="${measureName}"], #chart-national path[data-measure="${measureName}"]`)
+                        .attr("stroke-width", 4)
+                        .attr("opacity", 1);
+                    d3.selectAll(`.legend-item[data-measure="${measureName}"]`)
+                        .style("background-color", "#b3b3b37d");
+                    d3.selectAll("#chart-hospital path.line, #chart-national path.line")
+                        .filter(function () { return d3.select(this).attr("data-measure") !== measureName; })
+                        .attr("opacity", 0.3)
+                        .attr("stroke-width", 1.5);
+                }
+            }
+
+            // Draw hospital lines
+            hospitalMeasures.forEach((measureData, measureName) => {
+                const sortedData = measureData.slice().sort((a, b) => a["Measure Start Date"] - b["Measure Start Date"]);
+                const line = d3.line()
+                    .x(d => x(d["Measure Start Date"]))
+                    .y(d => yHospital(d.Score));
+
+                svgHospital.append("path")
+                    .datum(sortedData)
+                    .attr("class", "line")
+                    .attr("fill", "none")
+                    .attr("stroke", colorScale(measureName))
+                    .attr("stroke-width", 1.5)
+                    .attr("d", line)
+                    .attr("data-measure", measureName)
+                    .on("mouseover", function (event) {
+                        const measureName = d3.select(this).attr("data-measure");
+                        highlightLine(this, measureName, true);
+                    })
+                    .on("mouseout", function () {
+                        const measureName = d3.select(this).attr("data-measure");
+                        highlightLine(this, measureName, false);
+                    })
+                    .on("click", function () {
+                        const measureName = d3.select(this).attr("data-measure");
+                        toggleClickedLine(this, measureName);
+                    });
+            });
+
+            // Draw national lines
+            nationalMeasures.forEach((dateMap, measureName) => {
+                const nationalmeasureData = Array.from(dateMap, ([date, score]) => ({ "Measure Start Date": date, "Score": score }));
+                const sortedData = nationalmeasureData.slice().sort((a, b) => a["Measure Start Date"] - b["Measure Start Date"]);
+                const line = d3.line()
+                    .x(d => x(d["Measure Start Date"]))
+                    .y(d => yNational(d.Score));
+
+                svgNational.append("path")
+                    .datum(sortedData)
+                    .attr("class", "line")
+                    .attr("fill", "none")
+                    .attr("stroke", colorScale(measureName))
+                    .attr("stroke-width", 1.5)
+                    .attr("d", line)
+                    .attr("data-measure", measureName)
+                    .on("mouseover", function () {
+                        const measureName = d3.select(this).attr("data-measure");
+                        highlightLine(this, measureName, true);
+                    })
+                    .on("mouseout", function () {
+                        const measureName = d3.select(this).attr("data-measure");
+                        highlightLine(this, measureName, false);
+                    })
+                    .on("click", function () {
+                        const measureName = d3.select(this).attr("data-measure");
+                        toggleClickedLine(this, measureName);
+                    });
+            });
+
+            // Filtering by measure groups
+            function filterMeasuresByGroup(selectedGroup) {
+                let measuresToShow = [];
+                if (selectedGroup === "all") {
+                    measuresToShow = Object.values(measureGroups);
+                } else {
+                    measuresToShow = [measureGroups[selectedGroup]];
+                }
+
+                d3.selectAll("#chart-hospital path.line, #chart-national path.line")
+                    .style("display", function () {
+                        const measureName = d3.select(this).attr("data-measure");
+                        return (selectedGroup === "all" || measuresToShow.includes(measureName)) ? "inline" : "none";
+                    });
+
+                renderLegend(measuresToShow);
+            }
+
+            function renderLegend(measuresToShow) {
+                const legend = document.querySelector(".legend");
+                legend.innerHTML = "";
+
+                const uniqueMeasures = new Set(measuresToShow.flat());
+
+                uniqueMeasures.forEach(measureName => {
+                    const legendItem = d3.select(".legend").append("div")
+                        .attr("class", "legend-item")
+                        .style("display", "flex")
+                        .style("align-items", "center")
+                        .style("margin", "5px 0")
+                        .style("cursor", "pointer")
+                        .attr("data-measure", measureName)
+                        .on("mouseover", function () {
+                            const measureName = d3.select(this).attr("data-measure");
+                            highlightLine(this, measureName, true);
+                            d3.select(this).style("background-color", "#b3b3b37d");
+                        })
+                        .on("mouseout", function () {
+                            const measureName = d3.select(this).attr("data-measure");
+                            highlightLine(this, measureName, false);
+                            d3.select(this).style("background-color", "transparent");
+                        })
+                        .on("click", function () {
+                            const measureName = d3.select(this).attr("data-measure");
+                            toggleClickedLine(this, measureName);
+                            d3.selectAll(".legend-item").style("border", "1px solid transparent");
+                            d3.select(this).style("background-color", "#b3b3b37d");
+                        });
+
+                    legendItem.append("div")
+                        .style("width", "15px")
+                        .style("height", "15px")
+                        .style("border-radius", "3px")
+                        .style("background-color", colorScale(measureName))
+                        .style("border", "1px solid #ccc");
+
+                    legendItem.append("span")
+                        .style("margin-left", "10px")
+                        .style("font-size", "12px")
+                        .style("color", "#333")
+                        .text(measureName);
+                });
+            }
+
+            const measureSelect = document.getElementById("measure-select");
+            measureSelect.innerHTML = "";
+            const defaultOption = document.createElement("option");
+            defaultOption.value = "all";
+            defaultOption.textContent = "Show All";
+            measureSelect.appendChild(defaultOption);
+
+            Object.keys(measureGroups).forEach(groupName => {
+                const option = document.createElement("option");
+                option.value = groupName;
+                option.textContent = groupName;
+                measureSelect.appendChild(option);
+            });
+
+            measureSelect.addEventListener("change", function () {
+                const selectedGroup = measureSelect.value;
+                filterMeasuresByGroup(selectedGroup);
+            });
+
+            // Show all by default
+            filterMeasuresByGroup("all");
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const params = new URLSearchParams(window.location.search);
+            const hospitalName = params.get('hospital');
+            if (hospitalName) {
+                const hospitalSelect = document.getElementById("hospital-select");
+                hospitalSelect.value = decodeURIComponent(hospitalName);
+                hospitalSelect.dispatchEvent(new Event('change'));
+            }
+        });
+
+        document.getElementById("return-to-map").addEventListener("click", () => {
+            window.top.location.href = "index.html";
+                });
+    </script>
+</body>
+
+</html>
