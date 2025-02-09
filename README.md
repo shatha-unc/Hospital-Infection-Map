@@ -7,7 +7,7 @@ Welcome to the Hospital-Acquired Infections Visualization project! This interact
 - 🔍 **Filter by Infection Type**: Use a dropdown menu to filter infections by type.
 - 🔎 **Zoom and Pan**: Easily zoom into states and pan across the map for detailed exploration.
 - 💬 **Tooltips**: Hover over hospitals to see detailed infection data.
-- **Trend Analysis**: Click on an individual hospital to see a trend analysis in the selected hospital, compared to national infection rates.
+- **Trend Analysis**: Click on an individual hospital to see infection trends in the selected hospital, compared to national trends.
 
 ## 📊 Data Structure
 
